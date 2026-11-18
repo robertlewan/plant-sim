@@ -184,9 +184,9 @@
 
     $('play-id').textContent = `${level.id} · ${level.area}`;
     $('play-title').textContent = level.title;
-    $('brief').textContent = level.brief;
-    fillList($('work-list'), level.workOrder);
-    fillList($('data-list'), dataSheet(level));
+    const jobText = $('job-text');
+    jobText.textContent = '';
+    jobText.append(jobSections(level));
     $('study-title').textContent = level.study.title;
     const body = $('study-body');
     body.textContent = '';
@@ -224,28 +224,198 @@
     items.forEach((t) => ul.append(el('li', '', t)));
   }
 
-  // Data sheet lines for everything the player installs and configures.
+  // ---- Job text: situation, task, timeline, pass rules and data sheet ----
+
+  const UNIT_WORDS = {
+    m: 'metres of liquid',
+    'm³/s': 'cubic metres per second',
+    bar: 'bar',
+    '°C': '°C',
+    '%': '% of the vessel height',
+    'kg/s': 'kilograms per second',
+  };
+  const PART_NAMES = { L: 'level', F: 'flow', P: 'pressure', T: 'temperature' };
+  // Lower-cases the first letter unless the word is a tag or acronym (TK-101, FIC, ...).
+  const lower1 = (s) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+  const loopsOf = (level, who) => Object.keys(level.loops).filter((t) => (level.loops[t] === 'player') === (who === 'player'));
+  const sisOf = (level) => Object.keys(level.sis || {}).filter((t) => level.sis[t] === 'player');
+
+  function joinWords(items) {
+    if (items.length <= 1) return items.join('');
+    return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  }
+
+  // Steps for this job, built from what the player has to install and configure.
+  function taskSteps(level) {
+    const mine = loopsOf(level, 'player');
+    const sis = sisOf(level);
+    const modes = level.modes || {};
+    const steps = [];
+    if (!mine.length && !sis.length) {
+      steps.push('Everything is already installed and wired. You do not need to add anything to the P&ID.');
+      steps.push('Open the Configure step and check every loop, one setting at a time, against the data sheet below and what you have learned. Correct anything that is wrong.');
+      steps.push(`Start up the plant and watch the trend until the run ends (${level.duration} seconds). You can still change settings while it runs.`);
+      return steps;
+    }
+    const install = mine.map((tag) => {
+      const v = PART_NAMES[tag[0]];
+      const parts = [`a ${v} transmitter`, `a ${v} controller`];
+      if (!Plant.isMaster(level, tag)) parts.push('a control valve');
+      return `${joinWords(parts)} for ${tag}`;
+    });
+    sis.forEach((tag) => {
+      const S = Plant.SIS[tag];
+      install.push(`${['zero', 'one', 'two', 'three', 'four'][S.sensors.length]} safety ${PART_NAMES[S.pv.split('.')[1]]} transmitters for ${tag}`);
+    });
+    steps.push(`Install: put the missing instruments on the P&ID. You need ${install.join('; ')}.`);
+
+    const wires = [];
+    if (mine.length) wires.push('Wire: connect each transmitter to its controller, and each controller to its valve.');
+    mine.forEach((tag) => {
+      const slave = Object.keys(modes).find((k) => modes[k].cascadeFrom === tag);
+      if (slave) wires.push(`Also connect ${tag} to ${slave}: the master's output becomes the slave's setpoint (cascade).`);
+      if (modes[tag] && modes[tag].ratioTo) wires.push(`Also connect the charge flow transmitter FT-201 to ${tag}, so it can follow the charge (ratio).`);
+    });
+    if (sis.length) wires.push(`${mine.length ? 'Also connect' : 'Wire: connect'} each safety transmitter to its SIS logic box.`);
+    steps.push(wires.join(' '));
+
+    const what = [];
+    if (mine.length) what.push(`set the range, setpoint, action, fail position and tuning of ${joinWords(mine)}`);
+    if (sis.length) what.push(`set the trip setpoint and voting of ${joinWords(sis)}`);
+    steps.push(`Configure: ${joinWords(what)}. The Configure step explains every setting as you go.`);
+    steps.push(`Start up: press Start and watch the trend until the run ends (${level.duration} seconds). You can still change settings while it runs.`);
+    return steps;
+  }
+
+  // The pass rules, in words.
+  function passRules(level) {
+    const rules = [];
+    level.checks.forEach((c) => {
+      if (c.type === 'hold') {
+        const v = c.var || Plant.LOOPS[c.loop].pv;
+        const d = Plant.VARS[v];
+        const target = c.target !== undefined ? c.target : Plant.finalSp(level, c.loop);
+        const lo = +(target - c.tol).toFixed(3);
+        const hi = +(target + c.tol).toFixed(3);
+        rules.push(`At the end of the run, the ${lower1(d.label)} must have stayed between ${lo} and ${hi} ${d.unit} (the target ${target} ${d.unit}, give or take ${c.tol}) for the last ${c.hold} seconds.`);
+      } else if (c.type === 'noAlarms') {
+        rules.push('No alarms at any time: no value in this job may go past its high or low alarm limit (the dashed red and orange lines on the trend).');
+      } else if (c.type === 'noHigh') {
+        rules.push('No high alarms at any time. Low values are allowed in this job.');
+      } else if (c.type === 'max') {
+        const d = Plant.VARS[c.var];
+        rules.push(`The ${lower1(d.label)} must never go above ${c.limit} ${d.unit}.`);
+      } else if (c.type === 'min') {
+        const d = Plant.VARS[c.var];
+        rules.push(`The ${lower1(d.label)} must never go below ${c.limit} ${d.unit}.`);
+      } else if (c.type === 'tripped') {
+        rules.push(`${c.sis} must trip when the real danger comes, which is not before ${c.after} seconds. A trip before that is a false trip and fails the job.`);
+      } else if (c.type === 'notTripped') {
+        rules.push(`${c.sis} must not trip at all during the run.`);
+      }
+    });
+    return rules;
+  }
+
+  function bonusRules(level) {
+    const out = [];
+    if (level.par) {
+      const parts = [];
+      if (level.par.settle !== undefined) parts.push(`settle back inside the target band within ${level.par.settle} seconds of the upset`);
+      if (level.par.overshoot !== undefined) parts.push(`swing past the target by less than ${level.par.overshoot}%`);
+      const first = level.checks.find((c) => c.type === 'hold');
+      const label = first ? lower1(Plant.VARS[first.var || Plant.LOOPS[first.loop].pv].label) : 'value';
+      out.push(`Second star: after the upset (or after start-up, if nothing else changes), the ${label} must ${joinWords(parts)}.`);
+    }
+    else out.push('Second star: given automatically in this job, because there is no tuning target.');
+    out.push('Third star: finish without using any hints.');
+    return out;
+  }
+
+  // Data sheet: what each instrument is, its range and its target, in sentences.
   function dataSheet(level) {
-    const lines = [];
+    const items = [];
     const modes = level.modes || {};
     const ref = Plant.referenceConfig(level);
-    Object.keys(level.loops).filter((t) => level.loops[t] === 'player').forEach((tag) => {
+    const mine = loopsOf(level, 'player');
+    const given = loopsOf(level, 'given');
+    const troubleshoot = !mine.length && !sisOf(level).length;
+    const describe = troubleshoot ? given : mine;
+
+    describe.forEach((tag) => {
       const L = Plant.LOOPS[tag];
-      const unit = Plant.VARS[L.pv].unit;
+      const d = Plant.VARS[L.pv];
       const [lo, hi] = Plant.trueRange(level, tag);
       const mode = modes[tag] || {};
-      let line = `${L.tt}: calibrated ${lo} to ${hi} ${unit}. `;
-      if (mode.cascadeFrom) line += `${tag} gets its setpoint from ${mode.cascadeFrom}.`;
-      else if (mode.ratioTo) line += `${tag} ratio ${ref.loops[tag].ratio} × ${Plant.VARS[mode.ratioTo].label.toLowerCase()}.`;
-      else line += `${tag} target ${ref.loops[tag].sp} ${unit}.`;
-      lines.push(line);
+      const words = UNIT_WORDS[d.unit] || d.unit;
+      const lines = [];
+      lines.push(`${L.tt} measures the ${lower1(d.label)} in ${words}. It is calibrated from ${lo} to ${hi} ${d.unit}: it sends 4 mA when the value is ${lo} ${d.unit} and 20 mA when it is ${hi} ${d.unit}.`);
+      if (mode.cascadeFrom) {
+        lines.push(`${tag} has no fixed setpoint. It takes its setpoint from ${mode.cascadeFrom} (cascade).`);
+      } else if (mode.ratioTo) {
+        lines.push(`${tag} must keep this flow at ${ref.loops[tag].ratio} times the charge flow. That ${ref.loops[tag].ratio} is the ratio you enter.`);
+      } else {
+        lines.push(`${tag} must hold it at ${ref.loops[tag].sp} ${d.unit}. This is its setpoint.`);
+      }
+      if (Plant.isMaster(level, tag)) {
+        const slave = Object.keys(modes).find((k) => modes[k].cascadeFrom === tag);
+        lines.push(`Its output does not go to a valve: it sets the setpoint of ${slave}.`);
+      } else {
+        lines.push(`It moves control valve ${L.valve} (${lower1(Plant.VALVES[L.valve].name)}).`);
+      }
+      items.push({ tag, text: lines.join(' ') });
     });
-    Object.keys(level.sis || {}).filter((t) => level.sis[t] === 'player').forEach((tag) => {
+
+    sisOf(level).forEach((tag) => {
       const S = Plant.SIS[tag];
-      lines.push(`${tag}: sensors ${S.sensors.join(', ')}. On trip it ${S.action.charAt(0).toLowerCase() + S.action.slice(1)}.`);
+      const d = Plant.VARS[S.pv];
+      items.push({
+        tag,
+        text: `Uses ${S.sensors.length} safety transmitters (${joinWords(S.sensors)}) that measure the ${lower1(d.label)}. When enough of them read above the trip setpoint, it ${lower1(S.action)}. You choose the trip setpoint and how many must agree (the voting). The high alarm is ${d.hh} ${d.unit}.`,
+      });
     });
-    if (!lines.length) lines.push('All instruments are already installed. Your job is to inspect them and fix what is wrong.');
-    return lines;
+
+    if (!troubleshoot && given.length) {
+      items.push({ tag: 'Already running', text: `${joinWords(given)} ${given.length > 1 ? 'are' : 'is'} already installed and working. You do not need to change ${given.length > 1 ? 'them' : 'it'}.` });
+    }
+    return items;
+  }
+
+  function jobSections(level) {
+    const frag = document.createDocumentFragment();
+    const section = (title) => frag.appendChild(el('h3', 'job-h', title));
+
+    section('The situation');
+    level.situation.forEach((t) => frag.append(el('p', '', t)));
+
+    section('Your task');
+    const ol = el('ol', 'list');
+    taskSteps(level).forEach((t) => ol.append(el('li', '', t)));
+    frag.append(ol);
+
+    section('What happens during the run');
+    const tl = el('ul', 'list');
+    level.timeline.forEach((t) => tl.append(el('li', '', t)));
+    tl.append(el('li', '', `The run lasts ${level.duration} seconds. Use the speed buttons to run it faster.`));
+    frag.append(tl);
+
+    section('To pass');
+    const pass = el('ul', 'list');
+    passRules(level).forEach((t) => pass.append(el('li', '', t)));
+    frag.append(pass);
+    const bonus = el('ul', 'list bonus');
+    bonusRules(level).forEach((t) => bonus.append(el('li', '', t)));
+    frag.append(bonus);
+
+    section('Data sheet');
+    const ds = el('ul', 'list datasheet');
+    dataSheet(level).forEach(({ tag, text }) => {
+      const li = el('li');
+      li.append(el('b', '', `${tag}: `), document.createTextNode(text));
+      ds.append(li);
+    });
+    frag.append(ds);
+    return frag;
   }
 
   // ---- The job, pinned at the top of the later steps ----
@@ -254,9 +424,9 @@
   try { pinCollapsed = localStorage.getItem('plantsim.pinCollapsed') === '1'; } catch (e) { /* default open */ }
 
   function fillPin(level) {
-    $('pin-brief').textContent = level.brief;
-    fillList($('pin-work'), level.workOrder);
-    fillList($('pin-data'), dataSheet(level));
+    const job = $('pin-job');
+    job.textContent = '';
+    job.append(jobSections(level));
     $('pin-study-title').textContent = `What you need to know: ${level.study.title.toLowerCase()}`;
     const study = $('pin-study');
     study.textContent = '';
@@ -505,7 +675,7 @@
     // 1. Range
     const q1 = question('1. Range: what the transmitter can measure',
       `The transmitter turns the ${word} into a 4–20 mA current: 4 mA at the bottom of its calibrated range, 20 mA at the top. Type the same range here so the control system turns the current back into the right number. If they differ, every reading is wrong.`);
-    q1.append(el('p', 'sheet', `Data sheet: ${L.tt} calibrated ${tlo} to ${thi} ${unit}.`));
+    q1.append(el('p', 'sheet', `From the data sheet: ${L.tt} is calibrated from ${tlo} to ${thi} ${unit}. So the low end is ${tlo} and the high end is ${thi}.`));
     const r = el('div', 'row2');
     r.append(labelled(`Low end, 4 mA (${unit})`, numberInput('lo', cfg.lo)), labelled(`High end, 20 mA (${unit})`, numberInput('hi', cfg.hi)));
     q1.append(r);
@@ -516,12 +686,12 @@
       fs.append(question('2. Setpoint: comes from the master', `This is a cascade. ${mode.cascadeFrom}'s output (0–100%) is turned into this loop's setpoint across its range. You do not type one.`));
     } else if (mode.ratioTo) {
       const q2 = question('2. Ratio: how much per unit of the other flow', `The setpoint is not fixed: setpoint = ratio × ${Plant.VARS[mode.ratioTo].label.toLowerCase()}. If the charge goes up, this flow follows automatically.`);
-      q2.append(el('p', 'sheet', `Work order: ratio ${ref.ratio}.`));
+      q2.append(el('p', 'sheet', `From the job: the ratio is ${ref.ratio}.`));
       q2.append(labelled('Ratio', numberInput('ratio', cfg.ratio)));
       fs.append(q2);
     } else {
       const q2 = question('2. Setpoint: the target', `The ${word} you want the controller to hold, like the temperature you set on a home thermostat. The controller keeps moving the valve until the measurement equals the setpoint.`);
-      q2.append(el('p', 'sheet', `Work order target: ${ref.sp} ${unit}.`));
+      q2.append(el('p', 'sheet', `From the job: hold the ${word} at ${ref.sp} ${unit}.`));
       q2.append(labelled(`Setpoint (${unit})`, numberInput('sp', cfg.sp)));
       fs.append(q2);
     }
