@@ -191,6 +191,7 @@
     const body = $('study-body');
     body.textContent = '';
     level.study.body.forEach((t) => body.append(el('p', '', t)));
+    fillPin(level);
     $('hint-box').hidden = true;
     $('hint-box').textContent = '';
     updateHintButton();
@@ -247,6 +248,29 @@
     return lines;
   }
 
+  // ---- The job, pinned at the top of the later steps ----
+
+  let pinCollapsed = false;
+  try { pinCollapsed = localStorage.getItem('plantsim.pinCollapsed') === '1'; } catch (e) { /* default open */ }
+
+  function fillPin(level) {
+    $('pin-brief').textContent = level.brief;
+    fillList($('pin-work'), level.workOrder);
+    fillList($('pin-data'), dataSheet(level));
+    $('pin-study-title').textContent = `What you need to know: ${level.study.title.toLowerCase()}`;
+    const study = $('pin-study');
+    study.textContent = '';
+    level.study.body.forEach((t) => study.append(el('p', '', t)));
+  }
+
+  function setPinCollapsed(collapsed) {
+    pinCollapsed = collapsed;
+    $('job-pin').classList.toggle('collapsed', collapsed);
+    $('pin-toggle').textContent = collapsed ? 'Show' : 'Hide';
+    $('pin-toggle').setAttribute('aria-expanded', String(!collapsed));
+    try { localStorage.setItem('plantsim.pinCollapsed', collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+  }
+
   // ---- Steps ----
 
   function stepState(step) {
@@ -285,6 +309,7 @@
     if (!stepState(step).open) return;
     c.step = step;
     $('step-job').hidden = step !== 'job';
+    $('job-pin').hidden = step === 'job';
     $('pid-panel').hidden = !['install', 'wire', 'run'].includes(step);
     $('step-config').hidden = step !== 'config';
     $('step-run').hidden = step !== 'run';
@@ -1078,6 +1103,8 @@
   });
 
   $('job-next').addEventListener('click', () => goStep('install'));
+  $('pin-toggle').addEventListener('click', () => setPinCollapsed(!pinCollapsed));
+  setPinCollapsed(pinCollapsed);
   $('pid-next').addEventListener('click', nextFromPid);
   $('config-next').addEventListener('click', () => {
     if (current.invalid.size) {

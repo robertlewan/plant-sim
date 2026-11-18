@@ -56,6 +56,27 @@
 
       <nav class="steps" id="steps" aria-label="Job steps"></nav>
 
+      <!-- The job, pinned to the top while you install, wire, configure and run -->
+      <aside id="job-pin" class="job-pin" hidden>
+        <div class="pin-head">
+          <b>Your job</b>
+          <button id="pin-toggle" class="ghost" type="button" aria-expanded="true">Hide</button>
+        </div>
+        <div id="pin-body" class="pin-body">
+          <div class="pin-col">
+            <h4>The problem</h4>
+            <p id="pin-brief"></p>
+            <ul id="pin-work" class="list"></ul>
+            <h4>Data sheet</h4>
+            <ul id="pin-data" class="list"></ul>
+          </div>
+          <div class="pin-col">
+            <h4 id="pin-study-title">What you need to know</h4>
+            <div id="pin-study"></div>
+          </div>
+        </div>
+      </aside>
+
       <!-- 1. Job -->
       <div id="step-job" class="step">
         <article class="card">
