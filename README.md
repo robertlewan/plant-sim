@@ -2,6 +2,8 @@
 
 Learn instrumentation and process control by building a crude distillation unit, one loop at a time. It runs in any browser, on a phone or a PC.
 
+**Play it: https://robertlewan.github.io/plant-sim/**
+
 Each job has five steps:
 
 1. **Job**: read the problem and the data sheet.
