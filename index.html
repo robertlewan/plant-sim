@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1b2430">
+  <meta name="description" content="Build a crude distillation unit loop by loop: read the P&ID, install and wire instruments, configure and start up.">
+  <title>Plant Simulator</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/play.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Plant Simulator</div>
+    <div class="stats">
+      <span class="chip" id="rank">Apprentice</span>
+      <span class="chip" id="points">0 pts</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Refinery overview and work orders -->
+    <section id="levels-view" class="view">
+      <div class="card overview">
+        <div class="overview-head">
+          <div>
+            <h1>Your refinery</h1>
+            <p class="muted" id="built-count"></p>
+          </div>
+          <p class="muted small">Drag to move · right-drag or two-finger twist to rotate · scroll or pinch to zoom</p>
+        </div>
+        <div id="overview-3d" class="view3d"></div>
+      </div>
+
+      <div id="areas"></div>
+
+      <details class="card glossary">
+        <summary>Glossary</summary>
+        <dl id="glossary"></dl>
+      </details>
+
+      <div class="footer-actions">
+        <button id="reset-progress" class="ghost" type="button">Reset progress</button>
+      </div>
+    </section>
+
+    <!-- Play view: Job → Install → Wire → Configure → Start up -->
+    <section id="play-view" class="view" hidden>
+      <div class="play-head">
+        <button id="back" class="ghost" type="button">&larr; Refinery</button>
+        <div class="play-title">
+          <span id="play-id" class="muted"></span>
+          <h2 id="play-title"></h2>
+        </div>
+      </div>
+
+      <nav class="steps" id="steps" aria-label="Job steps"></nav>
+
+      <!-- 1. Job -->
+      <div id="step-job" class="step">
+        <article class="card">
+          <h3>The problem</h3>
+          <p id="brief" class="lead"></p>
+          <ul id="work-list" class="list"></ul>
+          <h4>Data sheet</h4>
+          <ul id="data-list" class="list"></ul>
+        </article>
+        <article class="card study">
+          <h3>What you need to know</h3>
+          <h4 id="study-title"></h4>
+          <div id="study-body"></div>
+        </article>
+        <div class="step-actions">
+          <button id="job-next" class="primary" type="button">Open the P&amp;ID</button>
+        </div>
+      </div>
+
+      <!-- 2, 3 and 5 share the P&ID -->
+      <div id="pid-panel" class="step" hidden>
+        <article class="card pid-card">
+          <div class="pid-head">
+            <h3 id="pid-title">P&amp;ID</h3>
+            <span id="pid-count" class="muted small"></span>
+          </div>
+          <p id="pid-msg" class="pid-msg"></p>
+          <div class="pid-layout">
+            <div id="pid" class="pid-wrap"></div>
+            <div id="palette" class="palette" hidden>
+              <h4>Storeroom</h4>
+              <p class="muted small">Drag a part onto a <b>?</b>, or tap a part then tap the <b>?</b>.</p>
+              <div id="parts" class="parts"></div>
+            </div>
+          </div>
+          <div class="pid-legend small muted">
+            <span><i class="lg pipe"></i>Process pipe</span>
+            <span><i class="lg signal"></i>Signal wire (4–20 mA)</span>
+            <span><i class="lg bubble"></i>Field instrument</span>
+            <span><i class="lg dcs"></i>Controller in the DCS</span>
+          </div>
+          <div class="step-actions" id="pid-actions">
+            <button id="pid-next" class="primary" type="button">Next</button>
+          </div>
+        </article>
+      </div>
+
+      <!-- 4. Configure -->
+      <div id="step-config" class="step" hidden>
+        <article class="card config">
+          <h3>Configure</h3>
+          <p class="muted small">Answer each question. The explanation under it tells you what the setting means. You can come back and change anything, even while the plant runs.</p>
+          <form id="config" autocomplete="off"></form>
+          <div id="hint-box" class="hint" hidden></div>
+          <div class="step-actions">
+            <button id="hint" class="ghost" type="button">Show hint (-1 star)</button>
+            <button id="config-next" class="primary" type="button">Go to start-up</button>
+          </div>
+        </article>
+      </div>
+
+      <!-- 5. Start up (below the live P&ID) -->
+      <div id="step-run" class="step" hidden>
+        <article class="card plant-card">
+          <div id="alarm" class="alarm" hidden></div>
+          <div class="controls">
+            <button id="run" class="primary" type="button">Start</button>
+            <div class="speed" role="group" aria-label="Simulation speed" id="speeds"></div>
+            <button id="check" class="ghost" type="button">Stop &amp; check</button>
+            <button id="restart" class="ghost" type="button">Restart</button>
+            <span id="clock" class="clock">0 s</span>
+          </div>
+        </article>
+        <article class="card trend-card">
+          <div class="trend-head">
+            <h3>Trend</h3>
+            <select id="trend-loop" aria-label="Loop to trend"></select>
+          </div>
+          <canvas id="trend" aria-label="Trend of the selected loop"></canvas>
+          <div class="legend">
+            <span><i class="sw level"></i>Actual value</span>
+            <span><i class="sw sp"></i>Setpoint</span>
+            <span><i class="sw valve"></i>Controller output (%)</span>
+            <span><i class="sw band"></i>Target band</span>
+          </div>
+        </article>
+        <div class="run-grid">
+          <article class="card loops-card">
+            <h3>Loops</h3>
+            <div class="table-wrap">
+              <table class="loops">
+                <thead><tr><th>Tag</th><th>PV</th><th>SP</th><th>Out</th><th>Valve</th></tr></thead>
+                <tbody id="loop-rows"></tbody>
+              </table>
+            </div>
+            <div id="sis-status" class="sis-status"></div>
+          </article>
+          <article class="card events-card">
+            <h3>Event log</h3>
+            <ol id="events" class="events"></ol>
+          </article>
+        </div>
+      </div>
+
+      <!-- Your refinery, always at the bottom -->
+      <article class="card plant3d-card">
+        <div class="pid-head">
+          <h3>Your refinery</h3>
+          <span class="muted small">Drag to move · pinch or scroll to zoom</span>
+        </div>
+        <div id="plant-3d" class="view3d"></div>
+      </article>
+    </section>
+  </main>
+
+  <!-- Result dialog -->
+  <div id="result" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="result-title">
+      <h2 id="result-title"></h2>
+      <div id="result-stars" class="stars" aria-hidden="true"></div>
+      <ul id="result-checks" class="list checks"></ul>
+      <p id="result-points" class="muted"></p>
+      <p id="result-learned" class="small"></p>
+      <div class="modal-actions">
+        <button id="result-retry" class="ghost" type="button">Try again</button>
+        <button id="result-see" class="ghost" type="button">See it in 3D</button>
+        <button id="result-next" class="primary" type="button">Next work order</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="js/plant.js"></script>
+  <script src="js/levels.js"></script>
+  <script src="js/pid.js"></script>
+  <script src="js/view3d.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
